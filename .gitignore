@@ -20,3 +20,9 @@ training_curves.png
 # OS Specific
 .DS_Store
 Thumbs.db
+
+# Node dependencies and builds
+node_modules/
+dist/
+package-lock.json
+
