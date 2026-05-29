@@ -1,0 +1,22 @@
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Local Dataset (RealWaste folder is too large for GitHub)
+RealWaste/
+realwaste_dataset/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch checkpoints and training outputs
+*.pth
+*.pt
+training_curves.png
+
+# OS Specific
+.DS_Store
+Thumbs.db
