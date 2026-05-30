@@ -369,34 +369,69 @@ def main():
             if predictions_queue.count(None) >= 6:
                 last_stable_class = None
 
+        # Try to get window size dynamically
+        try:
+            rect = cv2.getWindowImageRect("EcoSort AI - Waste Classifier Dashboard")
+            if rect is not None and rect[2] > 300 and rect[3] > 300:
+                win_w, win_h = rect[2], rect[3]
+            else:
+                win_w, win_h = WIN_W, WIN_H
+        except Exception:
+            win_w, win_h = WIN_W, WIN_H
+
         # --- BUILD FUTURISTIC CANVAS ---
-        canvas = np.zeros((WIN_H, WIN_W, 3), dtype=np.uint8)
+        canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
         canvas[:, :] = BG_COLOR
         
         # 1. Header Bar
-        cv2.rectangle(canvas, (0, 0), (WIN_W, 80), (16, 10, 8), -1)
-        cv2.line(canvas, (0, 80), (WIN_W, 80), BORDER_COLOR, 1)
+        cv2.rectangle(canvas, (0, 0), (win_w, 80), (16, 10, 8), -1)
+        cv2.line(canvas, (0, 80), (win_w, 80), BORDER_COLOR, 1)
         cv2.putText(canvas,
                     "ECOSORT AI - WASTE CLASSIFICATION CONSOLE",
-                    (WIN_W // 2 - 340, 50),
+                    ((win_w - 680) // 2, 50),
                     cv2.FONT_HERSHEY_TRIPLEX,
                     0.85,
                     HUD_GOLD,
                     2,
                     cv2.LINE_AA)
         
+        # Right Sidebar Panel dimensions
+        panel_w = 480
+        panel_x1 = win_w - panel_w - 40
+        panel_x2 = win_w - 40
+        panel_y1 = 110
+        panel_y2 = win_h - 50
+
+        # Draw Right Panel Background
+        cv2.rectangle(canvas, (panel_x1, panel_y1), (panel_x2, panel_y2), PANEL_COLOR, -1)
+        cv2.rectangle(canvas, (panel_x1, panel_y1), (panel_x2, panel_y2), BORDER_COLOR, 1)
+
+        # Available space for camera layout
+        avail_w = panel_x1 - 80
+        avail_h = win_h - 160
+        
+        # Aspect-ratio preserving scale
+        scale = min(avail_w / CAM_W, avail_h / CAM_H)
+        cam_draw_w = int(CAM_W * scale)
+        cam_draw_h = int(CAM_H * scale)
+        
+        # Center camera frame inside left available space
+        cam_draw_x = 40 + (avail_w - cam_draw_w) // 2
+        cam_draw_y = 110 + (avail_h - cam_draw_h) // 2
+
         # 2. Draw Camera feed into canvas
-        canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = frame
+        resized_frame = cv2.resize(frame, (cam_draw_w, cam_draw_h))
+        canvas[cam_draw_y:cam_draw_y + cam_draw_h, cam_draw_x:cam_draw_x + cam_draw_w] = resized_frame
         
         # Neon Border around camera viewport
-        cv2.rectangle(canvas, (CAM_X - 2, CAM_Y - 2), (CAM_X + CAM_W + 2, CAM_Y + CAM_H + 2), HUD_GOLD, 2)
-        cv2.putText(canvas, "LIVE SCANNER FEED", (CAM_X, CAM_Y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HUD_GOLD, 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (cam_draw_x - 2, cam_draw_y - 2), (cam_draw_x + cam_draw_w + 2, cam_draw_y + cam_draw_h + 2), HUD_GOLD, 2)
+        cv2.putText(canvas, "LIVE SCANNER FEED", (cam_draw_x, cam_draw_y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, HUD_GOLD, 1, cv2.LINE_AA)
 
         # 3. Draw Scanning Zone Box inside camera viewport (Absolute coordinates on canvas)
-        abs_x1 = CAM_X + ZONE_X1
-        abs_y1 = CAM_Y + ZONE_Y1
-        abs_x2 = CAM_X + ZONE_X2
-        abs_y2 = CAM_Y + ZONE_Y2
+        abs_x1 = cam_draw_x + int(ZONE_X1 * scale)
+        abs_y1 = cam_draw_y + int(ZONE_Y1 * scale)
+        abs_x2 = cam_draw_x + int(ZONE_X2 * scale)
+        abs_y2 = cam_draw_y + int(ZONE_Y2 * scale)
         
         # Color pulsing vignette/bracket depending on if target detected
         bracket_color = (0, 255, 0)  # Default green
@@ -405,7 +440,7 @@ def main():
             bracket_color = meta["color"]
             
         # Draw nice corner brackets for the scanning zone
-        length = 25
+        length = int(25 * scale)
         # Top-Left
         cv2.line(canvas, (abs_x1, abs_y1), (abs_x1 + length, abs_y1), bracket_color, 3, cv2.LINE_AA)
         cv2.line(canvas, (abs_x1, abs_y1), (abs_x1, abs_y1 + length), bracket_color, 3, cv2.LINE_AA)
@@ -424,7 +459,7 @@ def main():
                     "WASTE DETECTION ZONE",
                     (abs_x1, abs_y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
+                    0.45 * min(scale, 1.5),
                     bracket_color,
                     1,
                     cv2.LINE_AA)
@@ -444,15 +479,12 @@ def main():
                     hint_text,
                     (abs_x1 - 15, abs_y2 + 25),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
+                    0.45 * min(scale, 1.5),
                     hint_color,
                     1,
                     cv2.LINE_AA)
 
         # 4. Draw Right Panel Console
-        cv2.rectangle(canvas, (720, 110), (1240, 680), PANEL_COLOR, -1)
-        cv2.rectangle(canvas, (720, 110), (1240, 680), BORDER_COLOR, 1)
-
         # Set default values if no prediction yet
         display_title = "AWAITING MATERIAL"
         display_bin = "ROUTE TO: --"
@@ -474,10 +506,10 @@ def main():
                 conf_percentage = 85.0 # default stabilized display confidence
 
         # Classification Header Box
-        cv2.rectangle(canvas, (740, 130), (1220, 180), display_color, -1)
+        cv2.rectangle(canvas, (panel_x1 + 20, panel_y1 + 20), (panel_x2 - 20, panel_y1 + 70), display_color, -1)
         cv2.putText(canvas,
                     display_title,
-                    (760, 163),
+                    (panel_x1 + 40, panel_y1 + 53),
                     cv2.FONT_HERSHEY_DUPLEX,
                     0.7,
                     TEXT_WHITE,
@@ -487,7 +519,7 @@ def main():
         # Confidence Bar Indicator
         cv2.putText(canvas,
                     f"CONFIDENCE: {conf_percentage:.1f}%" + (" (Sandbox)" if res and res.get('is_mock') else ""),
-                    (740, 210),
+                    (panel_x1 + 20, panel_y1 + 100),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     TEXT_WHITE,
@@ -495,17 +527,17 @@ def main():
                     cv2.LINE_AA)
         
         # Outer bar
-        cv2.rectangle(canvas, (740, 222), (1220, 237), (70, 70, 70), -1)
+        cv2.rectangle(canvas, (panel_x1 + 20, panel_y1 + 112), (panel_x2 - 20, panel_y1 + 127), (70, 70, 70), -1)
         # Inner bar
-        bar_fill = int((conf_percentage / 100.0) * 480)
+        bar_fill = int((conf_percentage / 100.0) * (panel_w - 40))
         if bar_fill > 0:
-            cv2.rectangle(canvas, (740, 222), (740 + bar_fill, 237), display_color, -1)
+            cv2.rectangle(canvas, (panel_x1 + 20, panel_y1 + 112), (panel_x1 + 20 + bar_fill, panel_y1 + 127), display_color, -1)
 
         # Routing Destination
-        cv2.rectangle(canvas, (740, 262), (1220, 302), display_color, 2)
+        cv2.rectangle(canvas, (panel_x1 + 20, panel_y1 + 152), (panel_x2 - 20, panel_y1 + 192), display_color, 2)
         cv2.putText(canvas,
                     display_bin,
-                    (755, 287),
+                    (panel_x1 + 35, panel_y1 + 177),
                     cv2.FONT_HERSHEY_DUPLEX,
                     0.5,
                     display_color,
@@ -513,18 +545,18 @@ def main():
                     cv2.LINE_AA)
 
         # Sorting Guidelines Section
-        y_section = 340
-        cv2.putText(canvas, "SORTING GUIDELINES", (740, y_section), cv2.FONT_HERSHEY_SIMPLEX, 0.55, HUD_GOLD, 1, cv2.LINE_AA)
-        cv2.line(canvas, (740, y_section + 5), (1220, y_section + 5), BORDER_COLOR, 1)
+        y_section = panel_y1 + 230
+        cv2.putText(canvas, "SORTING GUIDELINES", (panel_x1 + 20, y_section), cv2.FONT_HERSHEY_SIMPLEX, 0.55, HUD_GOLD, 1, cv2.LINE_AA)
+        cv2.line(canvas, (panel_x1 + 20, y_section + 5), (panel_x2 - 20, y_section + 5), BORDER_COLOR, 1)
         
         # Bullet list coordinates
         bullet_list = [f"- {inst}" for inst in display_instructions]
-        draw_multiline_text(canvas, bullet_list, (740, y_section + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.45, TEXT_MUTED, 1, 25)
+        draw_multiline_text(canvas, bullet_list, (panel_x1 + 20, y_section + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.45, TEXT_MUTED, 1, 25)
 
         # Telemetry Stats Section
-        y_telemetry = 455
-        cv2.putText(canvas, "SESSION TELEMETRY", (740, y_telemetry), cv2.FONT_HERSHEY_SIMPLEX, 0.55, HUD_GOLD, 1, cv2.LINE_AA)
-        cv2.line(canvas, (740, y_telemetry + 5), (1220, y_telemetry + 5), BORDER_COLOR, 1)
+        y_telemetry = panel_y1 + 355
+        cv2.putText(canvas, "SESSION TELEMETRY", (panel_x1 + 20, y_telemetry), cv2.FONT_HERSHEY_SIMPLEX, 0.55, HUD_GOLD, 1, cv2.LINE_AA)
+        cv2.line(canvas, (panel_x1 + 20, y_telemetry + 5), (panel_x2 - 20, y_telemetry + 5), BORDER_COLOR, 1)
 
         # Calculations
         div_rate = 0
@@ -541,25 +573,25 @@ def main():
 
         for i, (name, val) in enumerate(metrics):
             y_pos = y_telemetry + 25 + i * 20
-            cv2.putText(canvas, f"{name}:", (740, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, TEXT_MUTED, 1, cv2.LINE_AA)
-            cv2.putText(canvas, val, (1080, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.45, HUD_GOLD, 1, cv2.LINE_AA)
+            cv2.putText(canvas, f"{name}:", (panel_x1 + 20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, TEXT_MUTED, 1, cv2.LINE_AA)
+            cv2.putText(canvas, val, (panel_x2 - 100, y_pos), cv2.FONT_HERSHEY_DUPLEX, 0.45, HUD_GOLD, 1, cv2.LINE_AA)
 
         # Eco Impact Box (translucent background box)
-        y_impact = 565
-        cv2.rectangle(canvas, (740, y_impact), (1220, y_impact + 95), (20, 45, 25) if res else (16, 20, 28), -1)
-        cv2.rectangle(canvas, (740, y_impact), (1220, y_impact + 95), (129, 185, 16) if res else BORDER_COLOR, 1)
+        y_impact = panel_y2 - 115
+        cv2.rectangle(canvas, (panel_x1 + 20, y_impact), (panel_x2 - 20, panel_y2 - 20), (20, 45, 25) if smoothed_class else (16, 20, 28), -1)
+        cv2.rectangle(canvas, (panel_x1 + 20, y_impact), (panel_x2 - 20, panel_y2 - 20), (129, 185, 16) if smoothed_class else BORDER_COLOR, 1)
         
-        cv2.putText(canvas, "ECO-IMPACT FACT:", (755, y_impact + 22), cv2.FONT_HERSHEY_DUPLEX, 0.45, (129, 185, 16) if res else HUD_GOLD, 1, cv2.LINE_AA)
+        cv2.putText(canvas, "ECO-IMPACT FACT:", (panel_x1 + 35, y_impact + 22), cv2.FONT_HERSHEY_DUPLEX, 0.45, (129, 185, 16) if smoothed_class else HUD_GOLD, 1, cv2.LINE_AA)
         
         # Wrap the impact fact text to fit
         wrapped_lines = wrap_text(display_impact, max_chars=48)
-        draw_multiline_text(canvas, wrapped_lines, (755, y_impact + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, TEXT_WHITE, 1, 18)
+        draw_multiline_text(canvas, wrapped_lines, (panel_x1 + 35, y_impact + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, TEXT_WHITE, 1, 18)
 
         # Status Footer Bar
-        cv2.rectangle(canvas, (0, WIN_H - 30), (WIN_W, WIN_H), (10, 8, 6), -1)
+        cv2.rectangle(canvas, (0, win_h - 30), (win_w, win_h), (10, 8, 6), -1)
         cv2.putText(canvas,
                     f"Model: {status_msg}  |  Controls: 'r' to Reset stats, 'q' to Quit",
-                    (20, WIN_H - 10),
+                    (20, win_h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.4,
                     TEXT_MUTED,
