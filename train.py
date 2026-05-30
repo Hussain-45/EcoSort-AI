@@ -17,6 +17,26 @@ EPOCHS = 5  # Set to a small number for testing; increase (e.g., 10-15) for high
 LEARNING_RATE = 0.0001
 VAL_SPLIT = 0.2
 
+# Custom dataset wrapper to apply transforms separately to train/val splits
+class SubsetWrapper(torch.utils.data.Dataset):
+    def __init__(self, subset, transform=None):
+        self.subset = subset
+        self.transform = transform
+
+    def __getitem__(self, index):
+        # Retrieve the image path and label from the base ImageFolder dataset
+        img_path, label = self.subset.dataset.samples[self.subset.indices[index]]
+        # Load the PIL Image using the base dataset's default loader
+        img = self.subset.dataset.loader(img_path)
+        
+        if self.transform is not None:
+            img = self.transform(img)
+            
+        return img, label
+
+    def __len__(self):
+        return len(self.subset.indices)
+
 def train_model():
     # 1. Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,8 +46,9 @@ def train_model():
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(20),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -38,12 +59,12 @@ def train_model():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    # 3. Load entire dataset
+    # 3. Load entire dataset (without default transform, applied by SubsetWrapper instead)
     if not os.path.exists(DATA_DIR):
         print(f"Error: Dataset directory '{DATA_DIR}' does not exist.")
         return
 
-    full_dataset = datasets.ImageFolder(root=DATA_DIR)
+    full_dataset = datasets.ImageFolder(root=DATA_DIR, transform=None)
     num_classes = len(full_dataset.classes)
     class_names = full_dataset.classes
     print(f"Loaded {len(full_dataset)} images belonging to {num_classes} classes:")
@@ -53,11 +74,11 @@ def train_model():
     # 4. Train / Val Split
     val_size = int(len(full_dataset) * VAL_SPLIT)
     train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    raw_train_subset, raw_val_subset = random_split(full_dataset, [train_size, val_size])
 
-    # Apply specific transformations to splits
-    train_dataset.dataset.transform = train_transform
-    val_dataset.dataset.transform = val_transform
+    # Wrap subsets with independent transformations
+    train_dataset = SubsetWrapper(raw_train_subset, train_transform)
+    val_dataset = SubsetWrapper(raw_val_subset, val_transform)
 
     # 5. Data Loaders
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)

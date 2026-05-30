@@ -276,6 +276,9 @@ def main():
     cv2.namedWindow("EcoSort AI - Waste Classifier Dashboard", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("EcoSort AI - Waste Classifier Dashboard", WIN_W, WIN_H)
 
+    import collections
+    from collections import Counter
+
     # Session Stats
     stats = {
         'total': 0,
@@ -283,8 +286,9 @@ def main():
         'compostables': 0,
     }
     
-    last_processed_class = None
-    last_processed_time = 0
+    # Prediction history queue for temporal smoothing (prevents flickers)
+    predictions_queue = collections.deque(maxlen=10)
+    last_stable_class = None
     
     # UI Design Palette (BGR)
     BG_COLOR = (25, 15, 11)        # Deep slate/navy
@@ -328,22 +332,42 @@ def main():
             if shared_results is not None:
                 res = shared_results.copy()
 
+        # Update prediction smoothing queue
+        if res is not None:
+            # If the model has reasonable confidence, add it. Otherwise, add None (empty zone)
+            if res['confidence'] > 0.55:
+                predictions_queue.append(res['class'])
+            else:
+                predictions_queue.append(None)
+        else:
+            predictions_queue.append(None)
+
+        # Get majority class in prediction window
+        smoothed_class = None
+        if len(predictions_queue) > 0:
+            counter = Counter(predictions_queue)
+            most_common = counter.most_common(1)
+            # Only count as a valid class if it's the majority and not None
+            if most_common and most_common[0][0] is not None:
+                # We require at least 4 out of 10 frames to agree on a class to stabilize
+                if most_common[0][1] >= 4:
+                    smoothed_class = most_common[0][0]
+
         # Update stats when a new stable detection is confirmed
-        if res is not None and res['confidence'] > 0.65:
-            detected_class = res['class']
-            current_time = time.time()
-            
-            # Count only if it is a new class or some time has passed to prevent double counting
-            if detected_class != last_processed_class or (current_time - last_processed_time) > 4.0:
-                meta = WASTE_METADATA.get(detected_class, WASTE_METADATA["miscellaneous trash"])
+        if smoothed_class is not None:
+            if smoothed_class != last_stable_class:
+                meta = WASTE_METADATA.get(smoothed_class, WASTE_METADATA["miscellaneous trash"])
                 stats['total'] += 1
                 if meta['recyclable']:
                     stats['recyclables'] += 1
-                if detected_class in ["food organics", "vegetation"]:
+                if smoothed_class in ["food organics", "vegetation"]:
                     stats['compostables'] += 1
                 
-                last_processed_class = detected_class
-                last_processed_time = current_time
+                last_stable_class = smoothed_class
+        else:
+            # Reset stable tracker once the zone is empty (at least 6 frames are None)
+            if predictions_queue.count(None) >= 6:
+                last_stable_class = None
 
         # --- BUILD FUTURISTIC CANVAS ---
         canvas = np.zeros((WIN_H, WIN_W, 3), dtype=np.uint8)
@@ -376,8 +400,8 @@ def main():
         
         # Color pulsing vignette/bracket depending on if target detected
         bracket_color = (0, 255, 0)  # Default green
-        if res is not None and res['confidence'] > 0.70:
-            meta = WASTE_METADATA.get(res['class'], WASTE_METADATA["miscellaneous trash"])
+        if smoothed_class is not None:
+            meta = WASTE_METADATA.get(smoothed_class, WASTE_METADATA["miscellaneous trash"])
             bracket_color = meta["color"]
             
         # Draw nice corner brackets for the scanning zone
@@ -405,6 +429,26 @@ def main():
                     1,
                     cv2.LINE_AA)
 
+        # Interactive guidance hint text under Scanning Zone
+        if smoothed_class is not None:
+            hint_text = "SCAN SUCCESSFUL! ROUTE TO BIN."
+            hint_color = (0, 255, 0) # Bright green
+        elif res is not None and 0.20 < res['confidence'] <= 0.55:
+            hint_text = "HINT: HOLD ITEM CLOSER & STEADY"
+            hint_color = (0, 165, 255) # Amber orange
+        else:
+            hint_text = "PLACE ITEM STABLE INSIDE SCAN BOX"
+            hint_color = (255, 230, 0) # Neon blue/cyan
+
+        cv2.putText(canvas,
+                    hint_text,
+                    (abs_x1 - 15, abs_y2 + 25),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    hint_color,
+                    1,
+                    cv2.LINE_AA)
+
         # 4. Draw Right Panel Console
         cv2.rectangle(canvas, (720, 110), (1240, 680), PANEL_COLOR, -1)
         cv2.rectangle(canvas, (720, 110), (1240, 680), BORDER_COLOR, 1)
@@ -417,14 +461,17 @@ def main():
         display_color = BORDER_COLOR
         conf_percentage = 0.0
         
-        if res is not None:
-            meta = WASTE_METADATA.get(res['class'], WASTE_METADATA["miscellaneous trash"])
+        if smoothed_class is not None:
+            meta = WASTE_METADATA.get(smoothed_class, WASTE_METADATA["miscellaneous trash"])
             display_title = meta["title"].upper()
             display_bin = f"ROUTE TO: {meta['bin']}"
             display_instructions = meta["instructions"]
             display_impact = meta["impact"]
             display_color = meta["color"]
-            conf_percentage = res['confidence'] * 100.0
+            if res and res['class'] == smoothed_class:
+                conf_percentage = res['confidence'] * 100.0
+            else:
+                conf_percentage = 85.0 # default stabilized display confidence
 
         # Classification Header Box
         cv2.rectangle(canvas, (740, 130), (1220, 180), display_color, -1)
@@ -530,7 +577,8 @@ def main():
             stats['total'] = 0
             stats['recyclables'] = 0
             stats['compostables'] = 0
-            last_processed_class = None
+            last_stable_class = None
+            predictions_queue.clear()
             print("Session statistics reset!")
 
     # Cleanup
