@@ -47,7 +47,7 @@ st.markdown("""
         margin-top: 15px;
     }
 </style>
-""", unsafe_allow_names=True)
+""", unsafe_allow_html=True)
 
 # 2. Globals and Metadata
 MODEL_PATH = "best_waste_model.pth"
